@@ -1,17 +1,19 @@
 import time
-import numpy as np
 import random
+import math
 import pygame
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
-def fill_polygon_opengl(vertices):
-    # Заполнение многоугольника с использованием PyOpenGL
-    glBegin(GL_POLYGON)
-    for vertex in vertices:
-        glVertex2f(vertex[0], vertex[1])
-    glEnd()
-
+"""
+Алгоритм заполнения методом затравки:
+1. Указывается затравочная точка;
+2. Алгоритм проверяет, входит ли текущая точка в заданную область:
+- Если точка входит в область и ещё не была заполнена, она добавляется в множество заполненных точек
+  и итеративно обходит своих соседей;
+- Если точка не принадлежит области или уже была обработана, обход не выполняется;
+3. Заполнение: Повторяется процесс обхода и добавления точек, пока не заполнятся все точки внутри границ;
+"""
 
 def generate_polygon(num_vertices, grid_size):
     # Генерируем случайные уникальные вершины многоугольника
@@ -25,17 +27,41 @@ def generate_polygon(num_vertices, grid_size):
     # Преобразуем в список и сортируем по углу относительно центра
     points = list(points)
     
-    # Находим центр для сортировки по углу
-    center = (sum(x for x, y in points) / num_vertices, 
-              sum(y for x, y in points) / num_vertices)
-    
-    # Сортируем точки по углу
-    points.sort(key=lambda point: (point[0] - center[0]) ** 2 + (point[1] - center[1]) ** 2)
-    
     return points
 
 
-def flood_fill(polygon, start_point, grid_size=(800, 600)):
+def fill_polygon_pyopengl(polygon, color=(1.0, 0.0, 0.0)):
+    glClear(GL_COLOR_BUFFER_BIT) # Очистка буфера цвета
+    
+    glColor3f(*color) # Установка цвета заливки
+
+    glBegin(GL_POLYGON) # Начало рисования многоугольника
+    for x, y in polygon:
+        glVertex2f(x / 500 - 1.0, y / 500 - 1.0)
+    glEnd() # Конец рисования многоугольника
+
+    # Заливка многоугольника
+    glFlush() # Отображение изменений
+
+
+def isPointInPolygon(point, polygon):
+    x, y = point
+    n = len(polygon)
+    inter = 0
+
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+
+        # Проверка пересечения луча с ребром
+        if (y1 <= y < y2 or y2 <= y < y1) and \
+            x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+                inter += 1
+
+    return inter % 2 == 1  # Нечетное количество пересечений означает, что точка внутри
+
+
+def flood_fill(polygon, start_point, grid_size):
     filled_points = set()  # Множество для хранения заполненных точек
     queue = [start_point]
 
@@ -48,10 +74,10 @@ def flood_fill(polygon, start_point, grid_size=(800, 600)):
     while queue:
         x, y = queue.pop()
 
-        if (x, y) not in filled_points and 0 <= x < grid_size[1] and 0 <= y < grid_size[0]:
+        if (x, y) not in filled_points and 0 <= x < grid_size[1] and 0 <= y < grid_size[0] and isPointInPolygon((x, y), polygon):
             filled_points.add((x, y))
 
-            # Добавляем соседние точки в очередь
+            # Добавляем соседние точки в очередь для дальнейшей проверки
             queue.append((x + 1, y))
             queue.append((x - 1, y))
             queue.append((x, y + 1))
@@ -60,18 +86,16 @@ def flood_fill(polygon, start_point, grid_size=(800, 600)):
     return filled_points
 
 
-def fill_polygon(vertices):
-    # Начинаем заливку с первой вершины
+def fill_polygon(vertices, grid):
     start_vertex = vertices[0]
-    filled_points = flood_fill(vertices, start_vertex)
+    filled_points = flood_fill(vertices, start_vertex, grid)
 
     # Формируем сетку для вывода
-    grid_size = (800, 600)
-    grid = [[' ' for _ in range(grid_size[1])] for _ in range(grid_size[0])]
+    grid_list = [[' ' for _ in range(grid[1])] for _ in range(grid[0])]
 
     for (x, y) in filled_points:
-        if 0 <= x < grid_size[1] and 0 <= y < grid_size[0]:
-            grid[int(y)][int(x)] = '#'
+        if 0 <= x < grid[1] and 0 <= y < grid[0]:
+            grid_list[int(y)][int(x)] = '#'
 
 
 def compare_performance(num_polygons, num_vertices, grid):
@@ -83,12 +107,12 @@ def compare_performance(num_polygons, num_vertices, grid):
 
         # Измерение времени для собственного алгоритма
         start_time = time.time()
-        fill_polygon(vertices)
+        fill_polygon(vertices, grid)
         custom_times.append(time.time() - start_time)
 
         # Измерение времени для OpenGL
         start_time = time.time()
-        fill_polygon_opengl(vertices)
+        fill_polygon_pyopengl(vertices)
         opengl_times.append(time.time() - start_time)
 
     avg_custom_time = sum(custom_times) / num_polygons
@@ -98,11 +122,10 @@ def compare_performance(num_polygons, num_vertices, grid):
     print(f"Avg time for OpenGL method: {avg_opengl_time:.6f} seconds")
 
 
-# Инициализация Pygame и OpenGL
+# Инициализация Pygame и OpenGL (Pygame работает через OpenGL)
 pygame.init()
-display = (800, 600)
+display = (1000, 1000)
 pygame.display.set_mode(display, pygame.DOUBLEBUF | pygame.OPENGL)
-gluOrtho2D(-1, 1, -1, 1)
 
 num_polygons = 1000  # Количество многоугольников для тестирования
 num_vertices = 1000  # Количество вершин в многоугольнике
